@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Smooth Snake/Worm Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      text-align: center;
+      background: #333;
+    }
+    #gameCanvas {
+      background: #000;
+      display: block;
+      margin: 20px auto;
+      border: 2px solid #fff;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="400" height="600"></canvas>
+
+<script>
+  // ----- Game Configuration -----
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Each block is 20×20 pixels.
+  const blockSize = 20;
+
+  // The canvas is 400px wide => 20 columns, 600px tall => 30 rows.
+  const cols = canvas.width  / blockSize; // 20
+  const rows = canvas.height / blockSize; // 30
+
+  // Snake arrays: each segment is { x, y } in grid coordinates (integers).
+  // We'll keep a 'prevSnake' for smooth interpolation.
+  let snake = [];
+  let prevSnake = [];
+
+  // Direction (grid-based). Starts going downward.
+  let direction = { x: 0, y: 1 };
+
+  // Food position
+  let food = { x: 0, y: 0 };
+
+  // Timing
+  let gameLoop = null;          // setInterval reference for discrete updates
+  const tickInterval = 300;     // how many ms between each snake move
+  let lastTickTime = 0;         // track when the last move happened
+
+  // ----- Initialize the game -----
+  function initGame() {
+    // Start snake at top-left corner, length = 2, going downward
+    snake = [
+      { x: 0, y: 0 }, // tail
+      { x: 0, y: 1 }  // head
+    ];
+    // Copy it to prevSnake so we have something to interpolate from
+    prevSnake = JSON.parse(JSON.stringify(snake));
+
+    direction = { x: 0, y: 1 }; // down
+
+    // Place the first food
+    placeFood();
+
+    // Clear any previous loop
+    if (gameLoop) clearInterval(gameLoop);
+
+    // Start discrete updates
+    gameLoop = setInterval(gameTick, tickInterval);
+    lastTickTime = performance.now();
+
+    // Start continuous rendering
+    requestAnimationFrame(renderLoop);
+  }
+
+  // ----- Discrete Game Tick (called every tickInterval ms) -----
+  function gameTick() {
+    // Store the current snake as 'prevSnake' for interpolation
+    prevSnake = JSON.parse(JSON.stringify(snake));
+
+    // Update snake logic (move, collisions, growth)
+    update();
+
+    // Reset the timing so we know when this move started
+    lastTickTime = performance.now();
+  }
+
+  // ----- Update the snake and check collisions (discrete) -----
+  function update() {
+    // The current head
+    const head = snake[snake.length - 1];
+    // Next head position
+    const newHead = {
+      x: head.x + direction.x,
+      y: head.y + direction.y
+    };
+
+    // 1. Check wall collision
+    if (
+      newHead.x < 0 ||
+      newHead.x >= cols ||
+      newHead.y < 0 ||
+      newHead.y >= rows
+    ) {
+      // Restart on collision
+      initGame();
+      return;
+    }
+
+    // 2. Check self collision
+    for (let i = 0; i < snake.length; i++) {
+      if (snake[i].x === newHead.x && snake[i].y === newHead.y) {
+        // Restart if hitting itself
+        initGame();
+        return;
+      }
+    }
+
+    // 3. Move the snake (add new head)
+    snake.push(newHead);
+
+    // 4. Check if we ate food
+    if (newHead.x === food.x && newHead.y === food.y) {
+      // Grow (just don't pop the tail)
+      // Place new food
+      placeFood();
+    } else {
+      // 5. Otherwise, remove the tail
+      snake.shift();
+    }
+  }
+
+  // ----- Continuous Render Loop (60+ FPS) -----
+  function renderLoop(timestamp) {
+    // fraction of the way between the last tick and the next tick
+    const elapsed = timestamp - lastTickTime;
+    let fraction = elapsed / tickInterval;
+    // clamp fraction to [0..1]
+    if (fraction > 1) fraction = 1;
+
+    draw(fraction);
+
+    // schedule next frame
+    requestAnimationFrame(renderLoop);
+  }
+
+  // ----- Draw the board, worm, and food -----
+  function draw(fraction) {
+    // Clear the canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw the snake, interpolating between prevSnake -> snake
+    ctx.fillStyle = 'lime';
+
+    // The snake might have grown by 1. We'll handle that by
+    // letting new segments appear at the new position (no old position).
+    for (let i = 0; i < snake.length; i++) {
+      const newPos = snake[i];
+      let oldPos = prevSnake[i];
+      // if the snake grew, prevSnake[i] might not exist
+      if (!oldPos) {
+        oldPos = newPos; // no movement for new segment
+      }
+
+      // Interpolate
+      const x = oldPos.x + fraction * (newPos.x - oldPos.x);
+      const y = oldPos.y + fraction * (newPos.y - oldPos.y);
+
+      drawBlock(x, y);
+    }
+
+    // Draw the food (no interpolation needed; it just sits at grid coords)
+    ctx.fillStyle = 'red';
+    drawBlock(food.x, food.y);
+  }
+
+  // ----- Helper: draw one block (x, y in grid coords, can be fractional) -----
+  function drawBlock(x, y) {
+    ctx.fillRect(x * blockSize, y * blockSize, blockSize, blockSize);
+  }
+
+  // ----- Place the food in a random free position -----
+  function placeFood() {
+    let valid = false;
+    while (!valid) {
+      const rx = Math.floor(Math.random() * cols);
+      const ry = Math.floor(Math.random() * rows);
+
+      // check if (rx, ry) is not occupied by the snake
+      if (!snake.some(segment => segment.x === rx && segment.y === ry)) {
+        food.x = rx;
+        food.y = ry;
+        valid = true;
+      }
+    }
+  }
+
+  // ----- Listen for key presses (optional) -----
+  document.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      case 'ArrowLeft':
+        if (direction.x === 1) return;
+        direction = { x: -1, y: 0 };
+        break;
+      case 'ArrowUp':
+        if (direction.y === 1) return;
+        direction = { x: 0, y: -1 };
+        break;
+      case 'ArrowRight':
+        if (direction.x === -1) return;
+        direction = { x: 1, y: 0 };
+        break;
+      case 'ArrowDown':
+        if (direction.y === -1) return;
+        direction = { x: 0, y: 1 };
+        break;
+    }
+  });
+
+  // ----- Start the game once the page is loaded -----
+  window.onload = initGame;
+</script>
+
+</body>
+</html>
